@@ -1,6 +1,8 @@
 ---
 title: "netcdf_fataframe"
-format: html
+output:
+  html_document:
+    self_contained: false
 editor: visual
 ---
 
@@ -34,8 +36,8 @@ load the shapefiles for the studyarea
 
 ```{r}
 ggplot(dat, 
-			aes(n_clusters, gap_value)) +
-	geom_ribbon(aes(ymin = gap_value  -sk, ymax = gap_value + sk), fill = "grey", alpha = 0.5) +
+			aes(n_clusters, gap.)) +
+#	geom_ribbon(aes(ymin = gap.  -sk., ymax = gap), fill = "grey", alpha = 0.5) +
 	geom_point() +
 	geom_line()
 
