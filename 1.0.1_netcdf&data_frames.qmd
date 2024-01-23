@@ -1,0 +1,283 @@
+---
+title: "netcdf_fataframe"
+format: html
+editor: visual
+---
+
+## packages
+
+```{r}
+library(raster)
+library(ncdf4)
+library(dplyr)
+library(sf)
+library(ggplot2)
+library(smoothr)
+library(tidyr)
+library(stringr)
+library(zoo)
+
+```
+
+## Running Code
+
+load the .nc
+
+```{r}
+dat <- stack(here::here("data/CDS/daily_smoothed",
+												"daily_smoothed_climatology_valid.nc"
+												))
+
+
+
+
+```
+
+load the shapefiles for the studyarea
+
+```{r}
+
+sv <- st_read("D:/Dropbox/R_projects/svalbaRd/data/Svalbard_UTM.shp")
+studyarea <- st_read("D:/Dropbox/R_projects/SV_phenology/out/06.5_bioregion_smooth_f4_k12res_4nBoot_100_Cleaned.shp") |> mutate(layer = 1) |> st_union() 
+sfDEG <- st_transform(sv, crs = 4326)
+
+# define polygon withi this limits -5, 50, 72-85
+#
+studyarea <- st_polygon(list(rbind(c(-5, 72), c(-5, 85), c(50, 85), c(50, 72), c(-5, 72)))) |> st_bbox() |> st_as_sfc() |> st_as_sf() 
+# add vertex to the polygon
+studyarea <- st_cast(studyarea, "POLYGON")
+# add the number of vertexes
+studyarea <- densify(studyarea, 1000)
+
+st_crs(studyarea) <- 4326
+studyarea <- st_difference(studyarea, sfDEG) 
+studyarea <- st_transform(studyarea, crs = 32633)
+
+
+
+
+rbase <- dat[[23]]
+
+studyR <- rasterize(studyarea, rbase)
+land <- rasterize(sv, rbase)
+
+rnew  <- raster(studyR)
+values(rnew) <- NA
+
+values(rnew)[which(!is.na(values(studyR)))] <- 1
+values(rnew)[which(!is.na(values(land)))] <- 0
+
+plot(rnew)
+
+writeRaster(studyR, here::here("data", "1.0.1_studyarea.nc"), overwrite = TRUE)
+
+
+
+
+```
+
+convert to data frame
+
+```{r}
+
+dfgeo <- as.data.frame(rnew, xy = TRUE, cells = T) |> mutate(geoID = 1:n()) |> 
+	rename(studyarea = layer) 
+summary(dfgeo)
+write.csv(dfgeo, here::here("data", "1.0.1_studyareaDF.csv"), row.names = F)
+
+```
+
+covert data to data frame
+
+```{r}
+
+
+df <- as.data.frame(dat, xy = TRUE) 
+dflong <- df |> pivot_longer(cols = -c(x, y), names_to = "xdoy", values_to = "CHL") |>
+	 mutate(doy = as.numeric(str_remove(xdoy, "X"))) |> select(-xdoy) |> left_join(dfgeo, by = c("x", "y")) 
+	
+
+#saveRDS(dflong, here::here("data", "1.0.1_df_valid_long.rds"))
+
+
+
+```
+
+# interpolation test
+
+test the linear interpolation
+
+```{r fig.height = 18, fig.width = 18}
+
+
+es <- dflong |> 
+	group_by(geoID) |>
+	#count NAs
+	mutate(na = sum(is.na(CHL))/n()) |> 
+	filter(na > 0.2, na < 0.8) 
+
+
+selID <- es|> group_by(geoID) |>
+	summarise(n = n()) |> 
+	# sample 10 random geoID
+	sample_n(20) 
+	
+es <- es |> left_join(selID, by = "geoID") |> filter(n > 0)
+
+
+ggplot(es, aes(doy, CHL)) +
+	geom_point() +
+	geom_line() +
+	facet_wrap(~geoID)
+
+
+
+# interpolate the data
+data_interpolated <- es |> 
+  group_by(geoID)|>
+  mutate(CHL_interpolated = na.approx(CHL, doy, rule = 2)) %>%
+  ungroup() |> 
+	mutate(lab = paste0(geoID, " Prop NAs = ", round(na, 3)))
+
+
+ggplot(data_interpolated, aes(doy, CHL_interpolated)) +
+	#geom_point() +
+	geom_line(colour = "green", size = 1.5) +
+	facet_wrap(~lab, scale = "free_y") +
+	theme_bw() +
+	geom_line(aes(y = CHL), colour = "black", size = 1.5) 
+
+
+
+
+```
+
+interpolate all the values
+
+```{r}
+dfinter <- dflong |> 
+	group_by(geoID) |>
+	#count NAs
+	mutate(naprop = sum(is.na(CHL))/n()) |> 
+	filter( naprop < 0.8) |> # at least 20% of the data
+	# interpolate the data
+	mutate(CHL_interpolated = na.approx(CHL, doy, rule = 2)) %>%
+	ungroup() 
+
+
+saveRDS(dfinter, here::here("data", "1.0.1_df_valid_long.rds"))
+
+
+```
+
+I check the spatial coverage
+
+```{r}
+ids <- dfinter |> 
+	group_by(x, y, studyarea) |>
+	summarise(n = n()) 
+
+
+rtest <- rasterFromXYZ(ids, crs = 32633)
+plot(rtest[[1]]); plot(studyarea, add = T, colour = NA, border = "red")
+
+```
+
+
+```{r fig.height = 18, fig.width = 18}
+# plot raster for naprop <- 0.8, 0.7, 0.5, 0.3)
+id08 <- dfinter |> 
+	filter(naprop < 0.8)|> 
+	group_by(x, y, studyarea) |>
+	summarise(n = n()) 
+r08 <- rasterFromXYZ(id08, crs = 32633)
+
+id07 <- dfinter |> 
+	filter(naprop < 0.7)|> 
+	group_by(x, y, studyarea) |>
+	summarise(n = n()) 
+r07 <- rasterFromXYZ(id07, crs = 32633)
+
+id05 <- dfinter |> 
+	filter(naprop < 0.5)|> 
+	group_by(x, y, studyarea) |>
+	summarise(n = n()) 
+r05 <- rasterFromXYZ(id05, crs = 32633)
+
+id03 <- dfinter |> 
+	filter(naprop < 0.3)|> 
+	group_by(x, y, studyarea) |>
+	summarise(n = n()) 
+r03 <- rasterFromXYZ(id03, crs = 32633)
+
+id02 <- dfinter |> 
+	filter(naprop < 0.2)|> 
+	group_by(x, y, studyarea) |>
+	summarise(n = n()) 
+r02 <- rasterFromXYZ(id03, crs = 32633)
+
+id01 <- dfinter |> 
+	filter(naprop < 0.1)|> 
+	group_by(x, y, studyarea) |>
+	summarise(n = n()) 
+r01 <- rasterFromXYZ(id03, crs = 32633)
+
+# plot with four subplots
+par(mfrow = c(2, 3))
+plot(r08[[1]]); plot(studyarea, add = T, colour = NA, border = "red"); title("naprop < 0.8")
+plot(r07[[1]]); plot(studyarea, add = T, colour = NA, border = "red"); title("naprop < 0.7")
+plot(r05[[1]]); plot(studyarea, add = T, colour = NA, border = "red"); title("naprop < 0.5")
+plot(r03[[1]]); plot(studyarea, add = T, colour = NA, border = "red"); title("naprop < 0.3")
+plot(r02[[1]]); plot(studyarea, add = T, colour = NA, border = "red"); title("naprop < 0.2")
+
+plot(r01[[1]]); plot(studyarea, add = T, colour = NA, border = "red"); title("naprop < 0.1")
+
+
+
+print(
+	paste(
+	"N. observation < 0.8 = " ,
+	nrow(id08)
+	)
+)
+
+print(
+	paste(
+	"N. observation < 0.7 = " ,
+	nrow(id07)
+	)
+)
+
+print(
+	paste(
+	"N. observation < 0.5 = " ,
+	nrow(id05)
+	)
+)
+
+print(
+	paste(
+	"N. observation < 0.3 = " ,
+	nrow(id03)
+	)
+)
+
+print(
+	paste(
+	"N. observation < 0.2 = " ,
+	nrow(id02)
+	)
+)
+
+print(
+	paste(
+	"N. observation < 0.1 = " ,
+	nrow(id01)
+	)
+)
+
+```
+
+
+
+
