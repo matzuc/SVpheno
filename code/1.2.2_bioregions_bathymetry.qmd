@@ -1,0 +1,128 @@
+---
+title: "cluster visualization"
+format: html
+warning: false
+message: false
+# html standalone
+standalone: true
+editor: 
+  markdown: 
+    wrap: 72
+    
+---
+
+## libraries
+
+load a few libraries
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(lubridate)
+library(ggthemes)
+library(sf)
+library(ggspatial)
+library(viridis)
+library(raster)
+library(stringr)
+
+library(factoextra)
+
+library(ggOceanMaps)
+library(grafify)
+library(data.table)
+library(Rcpp)
+```
+
+load the bioregions (DEG)
+
+```{r}
+bat <- raster("D:/Dropbox/R_projects/SV_phenology/data/GEBCO/gebco_2023_n85.0_s70.0_w-10.0_e60.0.tif")
+
+
+#  
+bio <- st_read(here::here('out', '1.1.0_cluster_8_gap_DEG.shp'))
+
+r <- rasterize(bio, bat, field = "cluster")
+names(r) <- "cluster"
+
+
+
+st <- stack(r, bat)
+names(st) <- c("K", "bath")
+
+stdf <- as.data.frame(st, xy = TRUE) |> filter(!is.na(K))
+
+
+stdf$bioregions <- factor(stdf$K, levels = c(0: 7, -1), labels = c("1", "2", "3", "4", "5", "6", "7", "8", "other"))
+
+
+set.seed(345)
+stdf2 <- stdf[sample(1:nrow(stdf), 28000), ]
+
+saveRDS(stdf, here::here("out", "1.2.2_bioregions_bathymetry.rds"))
+
+
+
+ggplot(stdf2, aes(x = bioregions, y = bath, colour = bioregions, fill = bioregions)) + 
+  ## add half-violin from {ggdist} package
+  ggdist::stat_halfeye(
+    ## custom bandwidth
+    adjust = .5, 
+    ## adjust height
+    width = .6, 
+    ## move geom to the right
+    justification = -.2, 
+    ## remove slab interval
+    .width = 0, 
+    point_colour = NA
+  ) + 
+  geom_boxplot(
+    width = .15, 
+    ## remove outliers
+    outlier.color = NA,
+    colour = "grey20",
+    fill = NA## `outlier.shape = NA` or `outlier.alpha = 0` works as well
+  ) +
+  ## add dot plots from {ggdist} package
+  ggdist::stat_dots(
+    ## orientation to the left
+    side = "left", 
+    ## move geom to the left
+    justification = 1.12, 
+    ## adjust grouping (binning) of observations 
+    binwidth = .25,
+    size = 1.1,
+    alpha = 0.3
+  ) +
+	theme_few() +
+		theme(legend.position = "none") +
+	#scale_fill_grafify()+
+	 grafify::scale_fill_grafify(palette = "kelly") +
+	grafify::scale_colour_grafify(palette = "kelly") +
+	xlab("Bioregion") +
+	ylab("Bathymetry (m)") +
+	geom_hline(yintercept = 0, linetype = "dotted", colour = "grey20") 
+
+ggsave(here::here("out", paste0("1.2.2_bioregion_bathymetry.png")), width = 6.5, height = 4.5, dpi = 300, bg = "white")
+
+
+
+
+
+
+
+```
+
+
+
+```{r}
+su <- stdf2 |> 
+	rename(bioregion = bioregions) |> 
+ group_by(bioregion) |> 
+	summarise(mean = mean(bath), sd = sd(bath), q10 = quantile(bath, 0.1), q90 = quantile(bath, 0.9), n = n()) 
+
+write.csv(su, here::here("out", "1.2.2_bioregion_bathymetrySTAT.csv"))
+```
+
