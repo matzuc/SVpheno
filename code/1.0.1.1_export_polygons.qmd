@@ -1,0 +1,58 @@
+---
+title: "netcdf_fataframe"
+format: html
+editor: visual
+---
+
+## packages
+
+```{r}
+library(raster)
+library(ncdf4)
+library(dplyr)
+library(sf)
+library(ggplot2)
+library()
+library(tidyr)
+library(stringr)
+library(zoo)
+
+```
+
+## Running Code
+
+load the .nc
+
+```{r}
+bio <- st_read(here::here('out', '1.1.0_cluster_8_gap_DEG.shp'))
+
+plot(bio)
+st_write(bio, here::here('out', '1.1.0_cluster_8_gap_DEG.geojson'))
+
+```
+
+
+
+netcdf
+
+```{r}
+dat <- raster::brick("D:/Dropbox/R_projects/SV_phenology/data/CDS/daily_coarsened/2000/cds2000_05.nc", varname = "chlor_a")
+
+r <- dat[[15]]
+plot(r)
+
+```
+
+
+rasterize the polygons
+
+```{r}
+
+polR <- rasterize(bio, r, field = "cluster")
+
+plot(polR)
+writeRaster(polR, here::here('out', '1.1.0_cluster_8_gap_DEG.tif'))
+
+
+
+```

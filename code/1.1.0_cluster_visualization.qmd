@@ -1,5 +1,5 @@
 ---
-title: "cluster on CLIMATOLOGY on CCI"
+title: "cluster visualization"
 format: html
 warning: false
 message: false
@@ -26,16 +26,9 @@ library(ggspatial)
 library(viridis)
 library(raster)
 library(stringr)
-library(pracma)
-library(purrr)
-library(Rcpp)
-library(multidplyr)
-#library(data.table)
-library("dbscan")
 
 library(factoextra)
-library(cluster)
-library(ClustGeo)
+
 library(ggOceanMaps)
 library(grafify)
 ```
@@ -44,24 +37,18 @@ library(grafify)
 Uso i cluster identificati in 
 [I'm an inline-style link](https://www.google.com)
 
-"D:\Dropbox\R_projects\test_cluster\R\z_clustre_elbow_11.html"
+""D:\Dropbox\R_projects\SVpheno\code\1.0.2_gap_analysis.html""
 
 
 
 
-ricostruisco il raster base
+I consider the 8 clusters (+ others) as the final bioregions
+
 
 ```{r}
-dt <- readRDS(here::here("data", "06.3_metrics_NOTrel_DT.rds"))
-rfull <- rasterFromXYZ(dt)
-rfullraw <- rfull
+raw <- raster(here::here('data', '1.0_cluster_8_gap_nrefs_default.nc'))
 
-myfact <- 4
-
-# aggregate factor 8
-r8raw <- aggregate(rfull, fact = myfact, fun = mean)
-
-plot(r8raw)
+#plot(r8raw)
 
 ```
 
@@ -72,20 +59,16 @@ plot(r8raw)
 #| label: fig-Tmax
 #| echo: FALSE
 #| warning: FALSE
-#| fig-height: 10
+#| fig-height: 5
 #| fig-width: 5
 
 
-K <- 12
-myfactor <- myfact
-res_alphas_l_dat <- readRDS(here::here("out", paste0("06.4.4_res_alphas_l_dat_f", myfactor, "_k", K, ".rds")))
 
 
-
-pl_clus_geoSpace <- res_alphas_l_dat %>% 
+pl_clus_geoSpace <- raw |> as.data.frame(xy = T)%>% 
   ggplot(aes(x = x, y= y, fill = factor(cluster))) +
   geom_tile() + 
-  facet_grid(alpha ~ .) +
+  #facet_grid(alpha ~ .) +
   theme(legend.position = "none") +
   ggtitle("Cluster, in geo-space") +
   theme_few()
@@ -96,228 +79,97 @@ pl_clus_geoSpace
 ```
 
 
-coordinate
+Vectorize the raster
 
 ```{r}
-sc <- scale(dt[, c("x", "y")])
-
-
-scale <- attr(sc, "scaled:scale")
-center <- attr(sc, "scaled:center")
-scale
-center
-
-
-```
-
-
-
-```{r}
-alpha <- 0.2
-
-newdf <- res_alphas_l_dat |> 
-	  dplyr::filter(alpha_name == "alpha_0.2") |> 
-   dplyr::mutate(x = x * scale[1] + center[1],
-         y = y * scale[2] + center[2]) |> 
-   dplyr::select(x, y, cluster)
-
-
-ggplot(newdf, aes(x = x, y = y, colour = factor(cluster))) +
-  geom_point() + 
-  theme(legend.position = "none") +
-  ggtitle("Cluster, in geo-space") +
-  theme_few()
-
-
-# Interpola i dati per ottenere una griglia regolare
-interp_data <- akima::interp(x = newdf$x, y = newdf$y, z = as.numeric(newdf$cluster))
-
-# Converti i dati interpolati in un raster
-rast <- raster(interp_data)
-
-plot(rast)
-
-```
-
-
-
-# rifaccio il cluster
-
-
-```{r}
-myfactor <- 4
-myfact_smooth <- 4
-nboot <- 100
-
-```
-
-```{r}
-
-dt2 <- dt |> 
-	  dplyr::select( -year) |>
-  # replace - inf with 0
-  dplyr::mutate(across(everything(), ~if_else(. == -Inf, 0, .))) |>
-  # replace na with 0
-  dplyr::mutate(across(everything(), ~if_else(is.na(.), 0, .))) |> 
-  # scalec
-  dplyr::mutate(across(everything(), base::scale)) 
-
-
-# rimuovo le variabili correlate
-dt2 <- dt2 |> 
-  dplyr::select(-CHL_mean_last_35, -mx, -end_doy)
-
-
-rfull <- rasterFromXYZ(dt2)
-rfull
-
-myfact <-myfactor
-
-# aggregate factor 8
-r8 <- aggregate(rfull, fact = myfact, fun = mean)
-mask <- r8[[1]]
-maskNA <- mask
-
-values(mask)[!is.na(values(mask))] <- 1
-
-values(r8)[which(is.na(values(r8)))] <- 0
-
-plot(r8)
-
-
-
-```
-
-
-```{r}
-
-dist_rast_euclid <-  function(x)  {
-  x %>% 
-    xyFromCell(cell = 1:ncell(.))  %>% 
-    dist() 
-}
-
-
-
-hclustgeo_df <-  function(D0, D1 = NULL, alpha, n_obs = TRUE, k = K) {
-  res <- hclustgeo(D0, D1, alpha = alpha) %>% 
-    cutree(k=k) %>% 
-    tibble(cluster = .)
-  if(n_obs) res <-  res %>% 
-      mutate(n_obs =   1:nrow(.)) %>% 
-      dplyr::select(n_obs, everything())
-  res
-  
-}
-
-```
-
-
-
-distances
-
-```{r}
-dat_dist <- dist(getValues(r8))
-geo_dist <-  dist_rast_euclid(r8)
-```
-
-
-
-
-```{r}
-hclusCut <- function(x, k, d.meth = "euclidean", ...)    list(cluster = cutree(hclust(dist(x, method=d.meth), ...), k=k))
-
-
-hc_geo <- function(x, k, d.meth = "euclidean", ...)    list(cluster = cutree(hclustgeo(dist(x)), k=k))
-
-
-selK <- 12
-```
-
-
-
-
-```{r}
-
-alphaS <- c(
-  c(0, 0.1, 0.2,   1),
-  seq(0.3, 0.4, by = 0.1)
-)
-
-alphaS <- alphaS |> sort()
-
-
-clust <- hclustgeo(dat_dist, geo_dist, alpha  =0.2)
-str(clust)
-cl12 <- cutree(clust, k = selK)
-
-```
-
-
-ricostruisco il raster
-
-```{r}
-coords <- as.data.frame(xyFromCell(r8raw, 1:ncell(r8)))
-
-dfclu <- data.frame(x = coords$x, y = coords$y, cluster = cl12)
-rclu <- rasterFromXYZ(dfclu)
-plot(rclu)
-
-
-
-
-writeRaster(rclu, here::here("out", paste0("06.5_bioregion_COARSE", myfactor, "_k", K,  "nBoot_", nboot,  ".tif")), overwrite = TRUE)
-
-
-
-res_high <- res(rclu) / myfact_smooth  # Ad esempio, dimezza la risoluzione per aumentare i dettagli
-clustR_high_res <- resample(rclu, raster(extent(rclu), resolution=res_high), method = "ngb")
-
-
-clustR_smooth <- terra::focal(clustR_high_res, w = matrix(1, 15, 15), fun = median, expand = T)
-plot(clustR_smooth)
-
-writeRaster(clustR_smooth, here::here("out", paste0("06.5_bioregion_smooth_f", myfactor, "_k", K, "res_", myfact_smooth, "nBoot_", nboot,  ".tif")), overwrite = TRUE)
-
-
-plot(rclu)
-plot(clustR_smooth)
-
-
-pol <- rasterToPolygons(clustR_smooth) |> st_as_sf() |> 
-  group_by(layer) |>
+pol <- rasterToPolygons(raw) |> st_as_sf() |> 
+  group_by(cluster) |>
   summarise(geometry = st_union(geometry)) 
-
+st_crs(pol) <- 32633
 plot(pol)
-st_write(pol, here::here("out",  paste0("06.5_bioregion_smooth_f",  myfactor, "_k", K, "res_", myfact_smooth, "nBoot_", nboot, ".shp")), overwrite = TRUE, append=FALSE)
+
+
+
+polDEG <- st_transform(pol, crs = 4326)
+
+
+# lands
+sv <- st_read("D:/Dropbox/R_projects/svalbaRd/data/Svalbard_UTM.shp")
+svDEG <- st_transform(sv, crs = 4326)
+
+
+
+xmin <- extent(polDEG)@xmin + 0.26
+xmax <- extent(polDEG)@xmax - 0.26
+ymin <- extent(polDEG)@ymin + 0.1
+ymax <- 83
+
+# study area
+studyarea <- st_polygon(list(rbind(c(xmin, ymin), c(xmin, ymax), c(xmax, ymax), c(xmax, ymin), c(xmin, ymin)))) |> st_bbox() |> st_as_sfc() |> st_as_sf() 
+# add vertex to the polygon
+studyarea <- st_cast(studyarea, "POLYGON")
+# add the number of vertexes
+studyarea <- smoothr::densify(studyarea, 1000)
+st_crs(studyarea) <- 4326
+
+studyarea <- st_difference(studyarea, svDEG) 
+
+
+
+
+studyarea <- st_transform(studyarea, crs = 32633)
+studyareaUTM <- studyarea |> st_transform(crs = 32633)
+plot(studyareaUTM)
+
+
+ggplot()+
+	geom_sf(data = studyareaUTM, fill = "NA", colour = "red") +
+	geom_sf(data = pol, aes(fill = factor(cluster)), alpha = 0.5) +
+	theme_bw()
+
+
+regions <- pol |> summarize(n = n()) |> 
+	mutate(ID = 1)
+# union
+diff <- st_difference(studyareaUTM, regions) |> mutate(cluster = -1) |> dplyr::select(cluster) |> rename(geometry = x)
+plot(diff)
+
+
+diff <- diff |> summarize(ID = n())
+
+# separate the polygons
+diff <- diff |> st_cast("POLYGON") |> st_sf() |> 
+	dplyr::select(-ID) |> mutate(cluster = -1)
+diff <- diff |>  mutate(ID = 1:n())
+plot(diff["ID"])
+
+
+
+
+diff <- diff |> filter(ID > 30 & ID < 70) |> dplyr::select(-ID)
+
+# atttach the diff to the cluster 
+bioreg <- rbind(pol, diff) |> dplyr::select(cluster)
+# remove
+ggplot(bioreg)+
+	geom_sf( aes(fill = factor(cluster)), alpha = 0.5) 
+
+
+
+
+
+bioreg$bioregions <- factor(bioreg$cluster, levels = c(0: 7, -1), labels = c("1", "2", "3", "4", "5", "6", "7", "8", "other"))
+
+st_write(bioreg, here::here("out",  "1.1.0_cluster_8_gap_UTM.shp"), overwrite = TRUE, append=FALSE)
+
+bioregDEG <- st_transform(bioreg, crs = 4326)
+
+st_write(bioregDEG, here::here("out",  "1.1.0_cluster_8_gap_DEG.shp"), overwrite = TRUE, append=FALSE)
+
 
 
 ```
 
-
-# Figura e pulizia
-
-
-```{r}
-
-sv <- st_read(
-	"D:/Dropbox/R_projects/svalbaRd/data/Svalbard_UTM.shp"
-)
-
-sv_deg <- st_transform(sv, crs = 4326)
-plot(sv_deg)
-
-st_crs(pol) <- st_crs(sv_deg)
-
-st_is_valid(pol)
-
-k <- st_difference(pol, st_union(sv_deg)) 
-plot(k)
-
-st_write(k, here::here("out",  paste0("06.5_bioregion_smooth_f",  myfactor, "_k", K, "res_", myfact_smooth, "nBoot_", nboot, "_Cleaned.shp")), overwrite = TRUE, append=FALSE)
-
-
-```
 
 
 
@@ -330,7 +182,97 @@ theme(axis.title = element_blank(),
       axis.ticks.x = element_blank(),
       axis.ticks.y = element_blank()
       ) +
-	geom_sf(data = k, aes(fill = factor(layer)), color = NA, alpha = 0.65) +
+	geom_sf(data = bioregDEG, aes(fill = bioregions), color = NA, alpha = 0.65) +
+	# legend on the bottom
+	theme(legend.position = "bottom") +
+	#modify guide changing the name of the fill
+labs(fill = "Bioregion") +
+	#scale_fill_grafify()+
+	 grafify::scale_fill_grafify(palette = "kelly")
+
+
+ggsave(here::here("out",  "1.1.0_bioregions_map.png"), width = 10, height = 10, dpi = 300, bg = "white")
+
+```
+
+
+
+
+
+
+
+# serie temporale
+
+```{r}
+rfull <- stack(here::here("data", "CDS/daily_smoothed/daily_smoothed_climatology_valid.nc"))
+
+
+
+bioregionsR <- rasterize(bioreg, rfull, field = "cluster")
+writeRaster(bioregionsR, here::here("out",  "1.1.0_bioregionsUTM.tif"), overwrite = TRUE)
+#plot(bioregionsR)
+
+rtot <- stack(bioregionsR, rfull)
+names(rtot)[1] <- "cluster"
+rdf <- as.data.frame(rtot, xy = TRUE)
+
+	
+rdf_long <- pivot_longer(rdf, -c(x, y, cluster), names_to = "valabr", values_to = "value")
+rdf_long$doy <- as.numeric(gsub("X", "", rdf_long$valabr))
+rdf_long$bioregions <- factor(rdf_long$cluster, levels = c(0: 7, -1), labels = c("1", "2", "3", "4", "5", "6", "7", "8", "other"))
+
+
+ave <- rdf_long |> 
+	filter(!is.na(value)) |> 
+	#rename(K = cluster) |>
+	#mutate(K = factor(K)) |> 
+	group_by(bioregions, doy) |>
+	summarise(ave = mean(value, na.rm = T), n = n(), se = plotrix::std.error(value), sd = sd(value))
+
+
+write.csv(ave, here::here("out", paste0("1.1.0_bioregion_climatology.csv")), row.names = FALSE)
+
+```
+
+```{r}
+
+aveth <- ave |> filter(!is.na(bioregions)) |> 
+	group_by(bioregions) |> 
+	summarise(th = median(ave, na.rm = T)* 1.05)
+
+ggplot(ave |> filter(!is.na(bioregions)), aes(doy, ave)) +
+	geom_line() +
+	facet_wrap(~bioregions, ncol = 3) +
+	theme_few() +
+	geom_ribbon(aes(ymin = ave - sd, ymax = ave + sd, fill = bioregions), alpha = 0.65) +
+	scale_fill_grafify(palette = "kelly") +
+	# remove legend
+	theme(legend.position = "none") +
+	xlab("Day of the year") +
+	ylab("Chlorophyll-a concentration (mg/m3)") +
+	geom_hline(data = aveth, aes(yintercept = th, colour = bioregions), linetype = "dashed") +
+	scale_colour_grafify(palette = "kelly") 
+
+ggsave(here::here("out", paste0("1.1.0_bioregion_climatology.png")), width = 12, height = 8, dpi = 300, bg = "white")
+
+
+
+```
+
+
+currents
+
+
+
+```{r}
+A <- basemap(limits = c(-7, 52, 68, 85), rotate = T,
+				bathymetry = F) +
+theme(axis.title = element_blank(),
+      axis.text = element_blank(),
+      axis.ticks.x = element_blank(),
+      axis.ticks.y = element_blank()
+      ) +
+	geom_sf(data = bioregDEG, aes(fill = bioregions), color = NA, alpha = 0.65) +
 	# legend on the bottom
 	theme(legend.position = "bottom") +
 	#modify guide changing the name of the fill
@@ -339,130 +281,73 @@ labs(fill = "Cluster") +
 	 grafify::scale_fill_grafify(palette = "kelly")
 
 
-ggsave(here::here("out",  paste0("06.5_bioregion_smooth_f",  myfactor, "_k", K, "res_", myfact_smooth, "nBoot_", nboot, ".png")), width = 10, height = 10, dpi = 300, bg = "white")
+cur <- st_read( "D:/Dropbox/R_projects/SV_phenology/out/06.7_xr_data_7_elbow_cur.shp")
+
+
+
+st_crs(cur) <- 32633
+
+cur_deg <- st_transform(cur, crs = 4326)
+
+A +
+	geom_sf(data = cur_deg,size = 1.5)
+
+
+# Estrai le coordinate lon e lat dalla colonna geometry
+cur_deg <- cur_deg %>%
+  mutate(lon = as.numeric(st_coordinates(geometry)[, 1]),
+         lat = as.numeric(st_coordinates(geometry)[, 2]))
+
+
+curdf <- cur_deg |> 
+	as.data.frame() |> 
+	dplyr::select(group, size, type, lon, lat) 
+
+
+# Ora crea le linee
+lines <- curdf %>%
+  group_by(group) %>%
+  arrange(group) %>%
+  do({
+    linea <- st_linestring(as.matrix(.[, c("lon", "lat")]))
+    st_sf(group = .$group[1], 
+    			size = .$size[1],
+    			type = .$type[1],
+    			geometry = st_sfc(linea, crs = 4326))
+  })
+linez <- st_as_sf(lines)
+
+A +
+	geom_sf(data = linez,
+					size = 1.5, aes(colour = type), show.legend = F, arrow =  arrow(angle = 25, ends = "last",  length = unit(0.1, "cm"))) +
+	scale_colour_manual(values = c("blue", "red"))
+
+
+ggsave(here::here("out",  paste0("1.1.0_bioregions_europe.png")), width = 10, height = 10, dpi = 300, bg = "white")
+
+
+
+
+write_sf(linez, here::here("data",  paste0("currents.shp")), overwrite = TRUE, append=FALSE)
 
 ```
 
 
 
-study_area
-
-```{r}
-sa <- pol |> mutate(layer = 1) |> st_union() 
-
-basemap(limits = c(-7, 52, 68, 85), rotate = T,
-				bathymetry = T) +
-theme(axis.title = element_blank(),
-      axis.text = element_blank(),
-      axis.ticks.x = element_blank(),
-      axis.ticks.y = element_blank()
-      ) +
-	geom_sf(data = sa,  color = "red", alpha = 0.65, fill = NA) +
-	# legend on the bottom
-	theme(legend.position = "bottom") +
-	#modify guide changing the name of the fill
-labs(fill = "Cluster") 
-
-
-ggsave(here::here("out",  paste0("06.5_study_area.png")), width = 10, height = 10, dpi = 300, bg = "white")
-
-
-```
-
-
-# serie temporale
-
-```{r}
-rfull <- stack(here::here("data", "CDS/daily_smoothed/daily_smoothed.nc"))
-rfull
-
-rext <- extend(clustR_smooth, rfull, method = "ngb")
-rext <- resample(rext, rfull, method = "ngb")
-
-rtot <- stack(rext, rfull)
-names(rtot)[1] <- "cluster"
-rdf <- as.data.frame(rtot, xy = TRUE)
-
-	
-rdf_long <- pivot_longer(rdf, -c(x, y, cluster), names_to = "valabr", values_to = "value")
-rdf_long$doy <- as.numeric(gsub("X", "", rdf_long$valabr))
 
 
 
-ave <- rdf_long |> 
-	filter(!is.na(value)) |> 
-	rename(K = cluster) |>
-	#mutate(K = factor(K)) |> 
-	group_by(K, doy) |>
-	summarise(ave = mean(value, na.rm = T), n = n(), se = plotrix::std.error(value), sd = sd(value))
-
-
-write.csv(ave, here::here("out", paste0("06.5_bioregion_climatology.csv")), row.names = FALSE)
-
-```
 
 ```{r}
 
-aveth <- ave |> filter(!is.na(K)) |> 
-	group_by(K) |> 
+aveth <- ave |> filter(!is.na(bioregions)) |> 
+	group_by(bioregions) |> 
 	summarise(th = median(ave, na.rm = T)* 1.05)
 
-ggplot(ave|>filter(!is.na(K)), aes(doy, ave)) +
-	geom_line() +
-	facet_wrap(~K, ncol = 4) +
-	theme_few() +
-	geom_ribbon(aes(ymin = ave - sd, ymax = ave + sd, fill = factor(K)), alpha = 0.65) +
-	scale_fill_grafify(palette = "kelly") +
-	# remove legend
-	theme(legend.position = "none") +
-	xlab("Day of the year") +
-	ylab("Chlorophyll-a concentration (mg/m3)") +
-	geom_hline(data = aveth, aes(yintercept = th, colour = factor(K)), linetype = "dashed") +
-	scale_colour_grafify(palette = "kelly") 
-
-ggsave(here::here("out", paste0("06.5_bioregion_climatology.png")), width = 12, height = 8, dpi = 300, bg = "white")
-
-
-
-```
-
-```{r}
-
-aveth <- ave |> filter(!is.na(K)) |> 
-	group_by(K) |> 
-	summarise(th = median(ave, na.rm = T)* 1.05)
-
-ggplot(ave|>filter(!is.na(K)), aes(doy, ave)) +
-	geom_line(aes(colour = factor(K))) +
-	#facet_wrap(~K, ncol = 4) +
-	theme_few() +
-#	geom_ribbon(aes(ymin = ave - sd, ymax = ave + sd, fill = factor(K)), alpha = 0.65) +
-	scale_fill_grafify(palette = "kelly") +
-	# remove legend
-	theme(legend.position = "none") +
-	xlab("Day of the year") +
-	ylab("Chlorophyll-a concentration (mg/m3)") +
-#	geom_hline(data = aveth, aes(yintercept = th, colour = factor(K)), linetype = "dashed") +
-	scale_colour_grafify(palette = "kelly") 
-
-ggsave(here::here("out", paste0("06.5_bioregion_climatology.png")), width = 12, height = 8, dpi = 300, bg = "white")
-
-
-
-```
-
-
-
-```{r}
-
-aveth <- ave |> filter(!is.na(K)) |> 
-	group_by(K) |> 
-	summarise(th = median(ave, na.rm = T)* 1.05)
-
-ggplot(ave|>filter(!is.na(K)), aes(doy, ave)) +
+ggplot(ave|>filter(!is.na(bioregions)), aes(doy, ave)) +
 	geom_line() +
 	geom_point(aes(colour = n)) +
-	facet_wrap(~K, ncol = 4) +
+	facet_wrap(~bioregions, ncol = 4) +
 	theme_few() +
 #	geom_ribbon(aes(ymin = ave - sd, ymax = ave + sd, fill = factor(K)), alpha = 0.65) +
 	#scale_fill_grafify(palette = "kelly") +

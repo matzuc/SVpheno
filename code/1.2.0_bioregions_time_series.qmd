@@ -1,0 +1,147 @@
+---
+title: "cluster visualization"
+format: html
+warning: false
+message: false
+# html standalone
+standalone: true
+editor: 
+  markdown: 
+    wrap: 72
+    
+---
+
+## libraries
+
+load a few libraries
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(lubridate)
+library(ggthemes)
+library(sf)
+library(ggspatial)
+library(viridis)
+library(raster)
+library(stringr)
+
+library(factoextra)
+
+library(ggOceanMaps)
+library(grafify)
+```
+
+
+Uso i cluster identificati in 
+[I'm an inline-style link](https://www.google.com)
+
+""D:\Dropbox\R_projects\SVpheno\code\1.0.2_gap_analysis.html""
+
+
+
+
+I consider the 8 clusters (+ others) as the final bioregions
+
+
+
+
+# Time series
+
+```{r}
+
+bioregionsR <- raster(here::here("out",  "1.1.0_bioregionsUTM.tif"))
+names(bioregionsR) <- "cluster"
+
+
+```
+
+
+
+dataframe for the output
+
+```{r}
+out <- data.frame(year = NA, date = NA, doy = NA, bioregion = NA, ave = NA, se = NA, sd = NA)
+
+```
+
+
+reading loop
+
+```{r}
+for(year in 1998:2022){
+	
+	# list files
+	files <- list.files(here::here("data", "CDS", "daily_smoothed", year), full.names = T)
+	# filters fils ending with .nc last three characters using stringr
+	files <- files[stringr::str_sub(files, -3) == ".nc"]
+	
+	
+	s <- stack()
+	for(i in 1:length(files)){
+		
+		# load chla
+		mo <- stack(files[i], varname = "chlor_a")
+		# attacco ai cluster
+		mor <- stack(bioregionsR, mo)
+		
+		# converto data frame
+		rdf <- as.data.frame(mor, xy = TRUE)
+		
+		# trasformo in long
+		rdf_long <- pivot_longer(rdf, -c(x, y, cluster), names_to = "valabr", values_to = "value") |> filter(!is.na(cluster))
+		rdf_long$date <- as_date(gsub("X", "", rdf_long$valabr))
+		rdf_long$bioregion <- factor(rdf_long$cluster, levels = c(0: 7, -1), labels = c("1", "2", "3", "4", "5", "6", "7", "8", "other"))
+		
+		# calcolo la media
+		ave <- rdf_long |> 
+			filter(!is.na(bioregion)) |>
+			mutate(year = year(date), doy = yday(date)) |>
+			group_by(year, date, doy, bioregion) |> 
+			summarise(ave = mean(value, na.rm = T), se = plotrix::std.error(value), sd = sd(value))
+		
+		out <- rbind(out, ave)
+			print(paste(year, i, "/", length(files)))
+
+	}
+
+	
+}
+
+```
+
+
+save the time series
+
+```{r}
+write.csv(out, here::here("out", "1.2.0_bioregions_chla_time_series.csv"))
+```
+
+
+simple plot
+
+
+```{r}
+
+ggplot(out |> filter(!is.na(bioregion), !is.na(year)), aes(doy, ave, colour = bioregion)) +
+	geom_line()  +
+	
+	facet_grid(bioregion ~ year, scale = "free_y") +
+	theme_few() +
+	#¶geom_hline(data = resPL, aes(yintercept = thr, colour = factor(cluster)), linetype = "dotted") +
+
+	scale_fill_grafify(palette = "kelly") +
+	# remove legend
+	theme(legend.position = "none") +
+	xlab("Day of the year") +
+	ylab("Chlorophyll-a concentration (mg/m3)") +
+
+	scale_colour_grafify(palette = "kelly") 
+	
+ggsave(here::here("out", paste0("1.2.0_simple_CHL_timeseries.png")), width = 24, height = 18, dpi = 300, bg = "white")
+
+
+
+```
+

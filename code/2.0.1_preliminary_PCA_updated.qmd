@@ -1,0 +1,215 @@
+---
+title: "cluster visualization"
+format: html
+warning: false
+message: false
+# html standalone
+standalone: true
+editor: 
+  markdown: 
+    wrap: 72
+    
+---
+
+## libraries
+
+load a few libraries
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(lubridate)
+library(ggthemes)
+library(sf)
+library(ggspatial)
+library(viridis)
+library(raster)
+library(stringr)
+
+library(factoextra)
+
+library(ggOceanMaps)
+library(grafify)
+library(data.table)
+library(Rcpp)
+library(vegan)
+library(ggrepel)
+```
+
+
+# load data
+
+metrics
+
+```{r}
+dat <- read.csv(here::here("data", "1.2.1_chl_metrics.csv"))
+
+#bior <- data.frame(bioregion = factor(dat$x, levels = c(0: 7, -1), labels = c("1", "2", "3", "4", "5", "6", "7", "8", "other")))
+bior <- data.frame(bioregion = factor(dat$x))
+dat <- cbind(dat, bior)
+
+
+```
+
+bathy
+
+```{r}
+bat <- read.csv(here::here("out", "1.2.2_bioregion_bathymetrySTAT.csv"))
+bat <- dplyr::select(bat, -X, -n)
+names(bat)[2:5] <- paste0("bat_", names(bat)[2:5])
+
+```
+
+
+```{r}
+dat2 <- left_join(dat, bat) 
+
+
+```
+
+mixed layer
+
+```{r}
+mi <- read.csv(here::here("data", "1.2.3_bioregions_mixeddepth_summary.csv")) |> 
+	  dplyr::select(-X, -n) |> 
+	rename(bioregion = bioregions)
+```
+
+```{r}
+dat3 <- left_join(dat2, mi) 
+
+
+```
+
+# PCA
+
+```{r}
+dat4 <- cbind(dat3[c("bioregion", "year", "x", "y")])
+
+dat5 <- dat3[-c(1:3, 25, 20)]
+
+datsc <- scale(dat5)
+summary(datsc)
+
+datfull <- cbind(dat4, datsc)
+
+datanalysis <- datfull[complete.cases(datfull), ]
+
+```
+
+```{r}
+mypca <- rda(datanalysis[, 5:ncol(datanalysis)], scale = TRUE)
+summary(mypca)
+
+# print the loadings of the first 5 components
+
+su <- summary(mypca)
+
+```
+
+
+plot
+
+```{r}
+moltfact <- 0.7
+
+PCAscores <- data.frame(scores(mypca, display = "sites"))
+PCAscores$bioregion <- datanalysis$bioregion
+
+
+
+PCAvect <- scores(mypca, display = "species") %>% 
+  as.data.frame() * moltfact
+row.names(PCAvect)
+
+
+ggplot() +
+  geom_point(data = PCAscores, aes(x = PC1, y = PC2, color = bioregion),size=4, alpha = 0.8) +
+  
+
+
+  geom_segment(data = PCAvect, aes(x = 0, y = 0, xend = PC1, yend = PC2), arrow = arrow(angle=22.5,length = unit(0.35,"cm"))) +
+ # geom_text(data = PCAvect, aes(x = PC1, y = PC2, label = rownames(PCAvect))) +
+  geom_text_repel(data = PCAvect, aes(x = PC1, y = PC2, label = rownames(PCAvect))) +
+  
+  theme_few() +
+  
+  
+         labs(x=paste("PCA 1 (", format(100 *su$cont[[1]][2,1], digits=4), "%)", sep=""),
+              y=paste("PCA 2 (", format(100 *su$cont[[1]][2,2], digits=4), "%)", sep=""),
+       title = "Principal Components Analysis on Env vars") +
+
+
+  geom_hline(yintercept=0,linetype=3,size=1) + 
+  geom_vline(xintercept=0,linetype=3,size=1)+
+  guides(shape=guide_legend(title=NULL,color="black"),
+         fill=guide_legend(title=NULL))+
+  theme_bw()+theme(panel.grid=element_blank())+
+	grafify::scale_colour_grafify(palette = "kelly")
+
+
+
+
+
+
+
+
+ggsave(here::here('out', '2.0.0_PCA_preliminary_PC1PC2.png'), width = 8, height = 6, dpi = 500)
+
+```
+
+
+
+
+without other
+
+```{r}
+moltfact <- 0.7
+datanalysis <- datanalysis |> 
+	  dplyr::filter(bioregion != "other")
+
+mypca <- rda(datanalysis[, 5:ncol(datanalysis)], scale = TRUE)
+
+PCAscores <- data.frame(scores(mypca, display = "sites"))
+PCAscores$bioregion <- datanalysis$bioregion
+su <- summary(mypca)
+
+PCAvect <- scores(mypca, display = "species") %>% 
+  as.data.frame() * moltfact
+
+
+ggplot() +
+  geom_point(data = PCAscores, aes(x = PC1, y = PC2, color = bioregion),size=4, alpha = 0.8) +
+  
+
+
+  geom_segment(data = PCAvect, aes(x = 0, y = 0, xend = PC1, yend = PC2), arrow = arrow(angle=22.5,length = unit(0.35,"cm"))) +
+ # geom_text(data = PCAvect, aes(x = PC1, y = PC2, label = rownames(PCAvect))) +
+  geom_text_repel(data = PCAvect, aes(x = PC1, y = PC2, label = rownames(PCAvect))) +
+  
+  theme_few() +
+  
+  
+         labs(x=paste("PCA 1 (", format(100 *su$cont[[1]][2,1], digits=4), "%)", sep=""),
+              y=paste("PCA 2 (", format(100 *su$cont[[1]][2,2], digits=4), "%)", sep=""),
+       title = "Principal Components Analysis on Env vars") +
+
+
+  geom_hline(yintercept=0,linetype=3,size=1) + 
+  geom_vline(xintercept=0,linetype=3,size=1)+
+  guides(shape=guide_legend(title=NULL,color="black"),
+         fill=guide_legend(title=NULL))+
+  theme_bw()+theme(panel.grid=element_blank())+
+	grafify::scale_colour_grafify(palette = "kelly")
+
+
+
+
+
+
+
+
+ggsave(here::here('out', '2.0.0_PCA_preliminary_PC1PC2_no_other.png'), width = 8, height = 6, dpi = 500)
+```
+

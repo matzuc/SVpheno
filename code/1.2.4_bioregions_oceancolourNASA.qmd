@@ -1,0 +1,325 @@
+---
+title: "cluster visualization"
+format: html
+warning: false
+message: false
+# html standalone
+standalone: true
+editor: 
+  markdown: 
+    wrap: 72
+    
+---
+
+## libraries
+
+load a few libraries
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(lubridate)
+library(ggthemes)
+library(sf)
+library(ggspatial)
+library(viridis)
+library(raster)
+library(stringr)
+
+library(factoextra)
+
+library(ggOceanMaps)
+library(grafify)
+library(data.table)
+library(Rcpp)
+```
+
+load the bioregions (DEG)
+
+```{r}
+bio <- st_read(here::here('out', '1.1.0_cluster_8_gap_DEG.shp'))
+
+```
+
+# PIC
+
+```{r}
+pic <- brick(here::here("data", "NASA","PIC", "AQUA_MODIS.20020704.L3m.DAY.PIC.x_pic.nc"))
+```
+
+bioregions in the PIC grid
+
+```{r}
+#  
+
+r <- rasterize(bio, pic, field = "cluster")
+names(r) <- "cluster"
+
+```
+
+output data frame (empty)
+
+
+```{r} 
+out <- data.frame(date = NA, cluster = NA, mean = NA, sd = NA, n = NA)[0, ]
+
+
+```
+
+
+```{r}
+path <- here::here("data", "NASA","PIC")
+
+lf <- list.files(path, pattern = "AQUA_MODIS.*.L3m.DAY.PIC.x_pic.nc", full.names = TRUE)
+
+dfl <- data.frame(file = lf) |> 
+	mutate(date = lubridate::ymd(substr(lf, 56, 63))) |> 
+	arrange(date) |> 
+	mutate(year = lubridate::year(date), month = lubridate::month(date))
+
+```
+
+
+```{r}
+sel <- dfl |> group_by(year, month) |> summarise(n()) 
+
+for(y in 1:nrow(sel)){
+	yy <- sel$year[y]
+	mm <- sel$month[y]
+
+	f <- dfl |> dplyr::filter(year == yy, month == mm) 
+	dd <- lubridate::ymd(substr(f$file, 56, 63))
+	
+	pic <- stack(f$file, varname = "pic")
+	
+	names(pic) <- dd
+	
+	pic <- stack(r, pic)
+
+	stdf <- as.data.frame(pic, xy = TRUE) |> filter(!is.na(cluster)) 
+	stdf <- pivot_longer(stdf, c(4:ncol(stdf)), names_to = "variable", values_to = "value") |> 
+		mutate(date = lubridate::ymd(substr(variable, 2, 11)))
+	
+	su <- stdf |> group_by(date, cluster) |> summarise(mean = mean(value, na.rm = TRUE), sd = sd(value, na.rm = TRUE),
+# count not NA values
+		n = sum(!is.na(value))) |> 
+		ungroup()
+	
+	
+	out <- rbind(out, su)
+	
+	rm(pic)
+	rm(su)
+	rm(stdf)
+	
+	print(paste(yy, mm))
+	
+}
+```
+
+
+```{r}
+out <- out |> mutate(cluster = factor(cluster, levels = c(0: 7, -1), labels = c("1", "2", "3", "4", "5", "6", "7", "8", "other")), doy = lubridate::yday(date), year = lubridate::year(date))
+
+
+summary(out)
+write.csv(out, here::here("out", "1.2.4_bioregion_PIC_timeseries.csv"), row.names = FALSE)
+
+ggplot(out, aes(doy, mean)) +
+	geom_point(aes(colour = cluster)) +
+	theme_few() +
+	facet_grid(cluster ~ year) +
+	geom_line(aes(colour = cluster)) +
+	#scale_fill_grafify()+
+	# grafify::scale_fill_grafify(palette = "kelly") +
+	grafify::scale_colour_grafify(palette = "kelly") +
+	xlab("Day of year") +
+	ylab("PIC [mol m-3]") +
+	# vertical label for the x axis
+	theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+	geom_hline(yintercept = 0, linetype = "dotted", colour = "grey20") +
+	scale_y_log10() +
+	# remove legend
+	theme(legend.position = "none") 
+
+
+
+ggsave(here::here("out", paste0("1.2.4_bioregion_PIC_log10.png")), width = 16.5, height = 14.5, dpi = 300, bg = "white")
+
+
+
+
+ggplot(out, aes(doy, mean)) +
+	geom_point(aes(colour = cluster)) +
+	theme_few() +
+	facet_grid(cluster ~ year) +
+	geom_line(aes(colour = cluster)) +
+	#scale_fill_grafify()+
+	# grafify::scale_fill_grafify(palette = "kelly") +
+	grafify::scale_colour_grafify(palette = "kelly") +
+	xlab("Day of year") +
+	ylab("PIC [mol m-3]") +
+	# vertical label for the x axis
+	theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+	geom_hline(yintercept = 0, linetype = "dotted", colour = "grey20") +
+	#scale_y_log10() +
+	# remove legend
+	theme(legend.position = "none") 
+
+
+
+ggsave(here::here("out", paste0("1.2.4_bioregion_PIC.png")), width = 16.5, height = 14.5, dpi = 300, bg = "white")
+
+
+
+```
+
+
+
+
+# PAR
+
+
+
+```{r}
+path <- here::here("data", "NASA","PAR")
+
+lf <- list.files(path, pattern = "AQUA_MODIS.*.L3m.DAY.PAR.x_par.nc", full.names = TRUE)
+
+dfl <- data.frame(file = lf) |> 
+	mutate(date = lubridate::ymd(substr(lf, 56, 63))) |> 
+	arrange(date) |> 
+	mutate(year = lubridate::year(date), month = lubridate::month(date))
+
+```
+
+
+```{r}
+out <- data.frame(date = NA, cluster = NA, mean = NA, sd = NA, n = NA)[0, ]
+
+```
+
+
+```{r}
+sel <- dfl |> group_by(year, month) |> summarise(n()) 
+
+for(y in 1:nrow(sel)){
+	yy <- sel$year[y]
+	mm <- sel$month[y]
+
+	f <- dfl |> dplyr::filter(year == yy, month == mm) 
+	dd <- lubridate::ymd(substr(f$file, 56, 63))
+	
+	pic <- stack(f$file, varname = "par")
+	
+	names(pic) <- dd
+	
+	pic <- stack(r, pic)
+
+	stdf <- as.data.frame(pic, xy = TRUE) |> filter(!is.na(cluster)) 
+	stdf <- pivot_longer(stdf, c(4:ncol(stdf)), names_to = "variable", values_to = "value") |> 
+		mutate(date = lubridate::ymd(substr(variable, 2, 11)))
+	
+	su <- stdf |> group_by(date, cluster) |> summarise(mean = mean(value, na.rm = TRUE), sd = sd(value, na.rm = TRUE),
+# count not NA values
+		n = sum(!is.na(value))) |> 
+		ungroup()
+	
+	
+	out <- rbind(out, su)
+	
+	rm(pic)
+	rm(su)
+	rm(stdf)
+	
+	print(paste(yy, mm))
+	
+}
+```
+
+
+```{r}
+out <- out |> mutate(cluster = factor(cluster, levels = c(0: 7, -1), labels = c("1", "2", "3", "4", "5", "6", "7", "8", "other")), doy = lubridate::yday(date), year = lubridate::year(date))
+
+
+write.csv(out, here::here("out", "1.2.4_bioregion_PAR_timeseries.csv"), row.names = FALSE)
+
+ggplot(out, aes(doy, mean)) +
+	geom_point(aes(colour = cluster)) +
+	theme_few() +
+	facet_grid(cluster ~ year) +
+	geom_line(aes(colour = cluster)) +
+	#scale_fill_grafify()+
+	# grafify::scale_fill_grafify(palette = "kelly") +
+	grafify::scale_colour_grafify(palette = "kelly") +
+	xlab("Day of year") +
+	ylab("PAR [einstein m^-2 day^-1]") +
+	# vertical label for the x axis
+	theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+	geom_hline(yintercept = 0, linetype = "dotted", colour = "grey20") +
+	scale_y_log10() +
+	# remove legend
+	theme(legend.position = "none") 
+
+
+
+ggsave(here::here("out", paste0("1.2.4_bioregion_PAR_log10.png")), width = 16.5, height = 14.5, dpi = 300, bg = "white")
+
+
+
+
+ggplot(out, aes(doy, mean)) +
+	geom_point(aes(colour = cluster)) +
+	theme_few() +
+	facet_grid(cluster ~ year) +
+	geom_line(aes(colour = cluster)) +
+	#scale_fill_grafify()+
+	# grafify::scale_fill_grafify(palette = "kelly") +
+	grafify::scale_colour_grafify(palette = "kelly") +
+	xlab("Day of year") +
+	ylab("PAR [einstein m^-2 day^-1]") +
+	# vertical label for the x axis
+	theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+	geom_hline(yintercept = 0, linetype = "dotted", colour = "grey20") +
+	#scale_y_log10() +
+	# remove legend
+	theme(legend.position = "none") 
+
+
+
+ggsave(here::here("out", paste0("1.2.4_bioregion_PAR.png")), width = 16.5, height = 14.5, dpi = 300, bg = "white")
+
+
+
+```
+
+
+```{r}
+ss <- out |> 
+	group_by(cluster, doy) |> 
+	summarise(ave = mean(mean, na.rm = TRUE), std = sd(mean, na.rm = TRUE), n = n()) 
+ggplot(ss, aes(doy, ave)) +
+	#geom_point(aes(colour = cluster)) +
+	geom_line(aes(colour = cluster)) +
+#	geom_ribbon(aes(ymin = ave - std, ymax = ave + std, fill = cluster), alpha = 0.2) +
+	grafify::scale_colour_grafify(palette = "kelly") +
+	grafify::scale_fill_grafify(palette = "kelly") +
+	theme_few() +
+	xlab("Day of year") +
+	ylab("PAR [einstein m^-2 day^-1]") +
+	# vertical label for the x axis
+	theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) 
+#	geom_hline(yintercept = 0, linetype = "dotted", colour = "grey20") +
+	# remove legend
+#	theme(legend.position = "none")
+
+ggsave(here::here("out", paste0("1.2.4_bioregion_PAR_ave.png")), width = 6, height = 4.5, dpi = 300, bg = "white")
+
+
+
+```
+
+
+
+

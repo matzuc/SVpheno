@@ -1,0 +1,229 @@
+---
+title: "cluster visualization"
+format: html
+warning: false
+message: false
+# html standalone
+standalone: true
+editor: 
+  markdown: 
+    wrap: 72
+    
+---
+
+## libraries
+
+load a few libraries
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(lubridate)
+library(ggthemes)
+library(sf)
+library(ggspatial)
+library(viridis)
+library(raster)
+library(stringr)
+
+library(factoextra)
+
+library(ggOceanMaps)
+library(grafify)
+library(data.table)
+library(Rcpp)
+library(stars)
+library(stringr)
+```
+
+load the bioregions (DEG)
+
+```{r}
+bio <- st_read(here::here('out', '1.1.0_cluster_8_gap_DEG.shp'))
+
+```
+
+# SST
+
+bioregions in the SST grid
+
+sst_matteo.nc
+
+(resampled in python)
+
+
+```{r}
+ras <- stack(here::here("data", "T", "sst_resampled_full.nc"), varname = "sst_mean_time_series")
+
+```
+
+
+resample the bioregions grid
+
+
+```{r}
+r <- rasterize(bio, ras, field = "cluster")
+names(r) <- "cluster"
+
+```
+
+
+
+```{r}
+
+st <- stack(r, ras)
+names(st)[1] <- c("K")
+
+stdf <- as.data.frame(st, xy = TRUE) 
+
+dates <- 
+	ymd(
+		paste(
+	as.numeric(str_sub(names(stdf)[4:ncol(stdf)], 2, 5)),
+	
+		str_sub(names(stdf)[4:ncol(stdf)], 7, 8),
+
+		str_sub(names(stdf)[4:ncol(stdf)], 10, 11)
+))
+
+
+stlong <- stdf |> 
+	pivot_longer(-c("x", "y", "K"), names_to = "datecode", values_to = "values")
+stlong$K[which(is.na(stlong$K))] <- -1
+
+
+times <- nrow(stlong) / length(dates)
+
+stlong$date <- rep(dates, times)
+
+
+
+
+head(stlong)
+
+gc()
+saveRDS(stdf, here::here("data", "1.2.5.1_bioregions_sst_10days.rds"))
+
+
+```
+
+
+free some memory
+
+```{r}
+rm(st)
+rm(ras)
+gc()
+```
+
+
+
+```{r}
+
+su <- stlong |>
+#	filter(K != -1) |>
+	group_by(K, date) |>
+	summarise(mean = mean(values, na.rm = TRUE),
+						std = sd(values, na.rm = TRUE)) |>
+	ungroup() |> 
+	mutate(bioregion = factor(K, levels = c(0: 7, -1), labels = c("1", "2", "3", "4", "5", "6", "7", "8", "other")),
+				 year = year(date),
+				 doy = yday(date)) 
+
+rm(stlong)
+gc()
+
+sumo <- 
+	su |> 
+	mutate(mo = month(date)) |>
+	
+	group_by(bioregion, mo, year) |>
+	
+	summarise(ave = mean(mean, na.rm = TRUE),
+					 stt = sd(mean, na.rm = TRUE)) |>
+	ungroup() |> 
+	mutate(date = as.Date(paste0(year, "-", mo, "-15")))
+
+suye <- 
+	su |> 
+	mutate(ye = year(date)) |>
+	
+	group_by(bioregion, ye) |>
+	
+	summarise(ave = mean(mean, na.rm = TRUE),
+					 stt = sd(mean, na.rm = TRUE)) |>
+	ungroup() |> 
+	mutate(date = as.Date(paste0(ye, "-06-15")))
+
+
+
+write.csv(sumo, here::here("out", "1.2.5.1_bioregion_1day_monthly.csv"), row.names = FALSE)
+write.csv(suye, here::here("out", "1.2.5.1_bioregion_1day_year.csv"), row.names = FALSE)
+write.csv(su, here::here("out", "1.2.5.1_bioregion_1day_day.csv"), row.names = FALSE)
+
+```
+
+```{r}
+
+
+ggplot(su, aes(x = date, y = mean, colour = bioregion, fill = bioregion)) + 
+#	geom_point(size = 0.4) +
+	theme_few() +
+	geom_line(alpha = 0.2) +
+	facet_wrap(~bioregion)+
+	geom_point(data = sumo, aes(x = date, y = ave, colour = bioregion), size = 0.3) +
+	geom_line(data = suye, aes(x = date, y = ave, colour = bioregion), size = 0.9) +
+	grafify::scale_colour_grafify(palette = "kelly") +
+	xlab("") +ylab("SST (°C)") +
+	# remove legend
+	theme(legend.position = "none") +
+	# add background grid
+	theme(panel.grid.major = element_line(colour = "grey", size = 0.1)) 
+
+  ## add half-violin from {ggdist} package
+
+ggsave(here::here("out", paste0("1.2.5.1_bioregion_1day.png")), width = 12, height = 9, dpi = 300, bg = "white")
+
+
+
+```
+
+
+```{r}
+
+ggplot(su , aes(x = doy, y = mean, colour = year, group = year)) + 
+#	geom_point(size = 0.4) +
+	theme_few() +
+	geom_line(alpha = 0.5) +
+	facet_wrap(~bioregion) +
+	# divergent scale (viridis
+	scale_color_viridis_c(option = "plasma") +
+	xlab("") +ylab("SST (°C)") +
+	# remove legend
+	theme(legend.position = "right") 
+
+
+ggsave(here::here("out", paste0("1.2.5.1_bioregion_1days_DOY.png")), width = 12, height = 9, dpi = 300, bg = "white")
+
+```
+
+
+
+```{r}
+
+ggplot(su |> filter(year > 1997) , aes(x = doy, y = mean, colour = bioregion, group = bioregion)) + 
+#	geom_point(size = 0.4) +
+	theme_few() +
+	geom_line(alpha = 0.9) +
+	facet_wrap(~year)+
+	grafify::scale_colour_grafify(palette = "kelly") +
+	xlab("") +ylab("SST (°C)") 
+
+
+ggsave(here::here("out", paste0("1.2.5_bioregion_1day_REGIONS.png")), width = 12, height = 9, dpi = 300, bg = "white")
+
+```
+
+
+
